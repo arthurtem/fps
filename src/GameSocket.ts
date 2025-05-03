@@ -51,7 +51,13 @@ export class GameSocket {
     this.onWaveUpdate = onWaveUpdate;
     
     // Initialize socket connection
-    this.socket = io();
+    // In production, use the current hostname, in development use localhost
+    const serverUrl = window.location.hostname === 'localhost' 
+      ? 'http://localhost:3000' 
+      : window.location.origin;
+    
+    console.log(`Connecting to Socket.IO server at ${serverUrl}`);
+    this.socket = io(serverUrl);
     
     // Add connection debug logging
     this.socket.on('connect', () => {
