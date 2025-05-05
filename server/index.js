@@ -16,7 +16,7 @@ const games = {}; // { gameId: { host: socketId, players: [{ id, position, rotat
 const playerSockets = {}; // { socketId: gameId }
 
 // Interval to broadcast full game state to all players in a game
-const SYNC_INTERVAL = 50; // milliseconds (reduced from 100ms)
+const SYNC_INTERVAL = 20; // milliseconds (reduced from 50ms for smoother updates)
 const syncIntervals = {}; // Store intervals by game ID
 
 // Function to start sync interval for a game
@@ -43,13 +43,16 @@ function startSyncInterval(gameId) {
     });
   }, SYNC_INTERVAL);
   
-  console.log(`Started sync interval for game: ${gameId}`);
+  console.log(`Started sync interval for game: ${gameId} with tick rate: ${1000/SYNC_INTERVAL}Hz`);
 }
 
 // Function to update bot positions server-side (called only by host)
 function updateBots(gameId) {
   const game = games[gameId];
   if (!game) return;
+  
+  // Skip bot movement updates if the game is paused
+  if (game.gamePaused) return;
   
   const currentTime = Date.now();
   const timeDelta = (currentTime - (game.lastBotUpdate || currentTime)) / 1000; // Convert to seconds
@@ -138,7 +141,7 @@ function spawnBotWithinCourse(gameId, waveNum, index) {
   // Keep them away from the end wall too
   const minZ = -110; // Start spawning from this position (further away)
   const maxZ = -60; // Don't spawn closer than this to the player
-  const spawnZ = minZ + Math.random() * (minZ - maxZ); // Random position in the allowed range
+  const spawnZ = minZ + Math.random() * (maxZ - minZ); // Correct calculation to spawn between minZ and maxZ
   
   const bot = {
     id: `bot-wave${waveNum}-${index}`,
@@ -205,6 +208,9 @@ function checkWaveCompletion(gameId) {
   const game = games[gameId];
   if (!game) return;
   
+  // Don't start new waves if the game is paused
+  if (game.gamePaused) return;
+  
   if (game.remainingEnemies <= 0 && game.isWaveInProgress) {
     game.isWaveInProgress = false;
     
@@ -215,7 +221,7 @@ function checkWaveCompletion(gameId) {
     
     // Start new wave after delay
     setTimeout(() => {
-      if (games[gameId]) {
+      if (games[gameId] && !games[gameId].gamePaused) {
         startNewWave(gameId);
       }
     }, 3000);
@@ -245,7 +251,8 @@ io.on('connection', (socket) => {
       remainingEnemies: 3, // Base enemy count for wave 1
       isWaveInProgress: false, // Initially set to false until game is started
       lastUpdate: Date.now(), // Track last update time
-      gameStarted: false // Track if game has been started
+      gameStarted: false, // Track if game has been started
+      gamePaused: false // Track game pause state
     };
     
     playerSockets[socket.id] = gameId;
@@ -264,6 +271,22 @@ io.on('connection', (socket) => {
     });
     
     console.log(`Game created: ${gameId} by host: ${socket.id}`);
+  });
+
+  // Toggle pause state (only host can control this)
+  socket.on('toggle-pause', () => {
+    const gameId = playerSockets[socket.id];
+    if (!gameId || !games[gameId] || games[gameId].host !== socket.id) return;
+    
+    // Toggle pause state
+    games[gameId].gamePaused = !games[gameId].gamePaused;
+    
+    console.log(`Game ${gameId} ${games[gameId].gamePaused ? 'paused' : 'resumed'} by host ${socket.id}`);
+    
+    // Notify all players about pause state change
+    io.to(gameId).emit('game-pause-state', {
+      isPaused: games[gameId].gamePaused
+    });
   });
 
   // Host updates bot positions directly (for more consistent behavior)

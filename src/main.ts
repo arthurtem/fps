@@ -38,13 +38,28 @@ let gameStarted = false;
 // Add a variable to track game initialization state separately from wave progress
 let gameInitialized = false;
 
-// Function to find the start button in the scene
-function findStartButton() {
+// Track whether the game is paused
+let gamePaused = false;
+
+// Reference to the restart button
+let restartButton: THREE.Mesh | null = null;
+
+// Function to find the start and restart buttons in the scene
+function findButtons() {
+  // Reset references
+  startButton = null;
+  restartButton = null;
+  
   // Look through all objects in the scene
   scene.traverse((object) => {
     if (object.userData && object.userData.isStartButton) {
       startButton = object as THREE.Mesh;
       console.log("Found start button for animation");
+    }
+    
+    if (object.userData && object.userData.isRestartButton) {
+      restartButton = object as THREE.Mesh;
+      console.log("Found restart button");
     }
   });
 }
@@ -56,8 +71,8 @@ const world = new World(scene);
 const player = new Player(scene, world);
 scene.add(player.playerBody);
 
-// Now find the start button after scene is set up
-findStartButton();
+// Now find the buttons after scene is set up
+findButtons();
 
 // Add window resize handler - moved after player initialization
 window.addEventListener('resize', () => {
@@ -503,13 +518,112 @@ checkForGameInvite();
 // Create copy button on page load
 createCopyLinkButton();
 
+// Function to restart the game
+function restartGame() {
+  console.log("Restarting game...");
+  
+  // Reset game state variables
+  currentWave = 1;
+  baseEnemyCount = 3;
+  remainingEnemies = baseEnemyCount;
+  isWaveInProgress = true;
+  gamePaused = false;
+  
+  // Clear all existing bots
+  for (let i = bots.length - 1; i >= 0; i--) {
+    scene.remove(bots[i].body);
+    bots.splice(i, 1);
+  }
+  
+  // Create new bots for wave 1
+  for (let i = 0; i < baseEnemyCount; i++) {
+    createBot();
+  }
+  
+  // Reset player position
+  player.playerBody.position.set(0, 1, 0);
+  player.velocity.set(0, 0, 0);
+  
+  // Update wave info display
+  updateWaveInfo();
+  
+  // Show restart message
+  const restartMessage = document.createElement('div');
+  restartMessage.style.position = 'absolute';
+  restartMessage.style.top = '50%';
+  restartMessage.style.left = '50%';
+  restartMessage.style.transform = 'translate(-50%, -50%)';
+  restartMessage.style.padding = '20px 30px';
+  restartMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+  restartMessage.style.color = '#00ff00';
+  restartMessage.style.fontFamily = 'Arial, sans-serif';
+  restartMessage.style.fontSize = '32px';
+  restartMessage.style.borderRadius = '10px';
+  restartMessage.style.textAlign = 'center';
+  restartMessage.style.zIndex = '2000';
+  restartMessage.textContent = 'GAME RESTARTED - WAVE 1';
+  
+  document.body.appendChild(restartMessage);
+  
+  // Remove the message after 2 seconds
+  setTimeout(() => {
+    document.body.removeChild(restartMessage);
+  }, 2000);
+}
+
+// Function to toggle paused state
+function togglePauseGame() {
+  // In multiplayer mode, only host can toggle pause and it's handled by the server
+  if (gameSocket && gameSocket.getIsHost()) {
+    // Let the server handle the pause state toggle
+    gameSocket.togglePauseGame();
+    return;
+  }
+  
+  // For single player, handle pause state locally
+  gamePaused = !gamePaused;
+  console.log(gamePaused ? "Waves paused" : "Waves resumed");
+  
+  // Show message
+  const pauseMessage = document.createElement('div');
+  pauseMessage.style.position = 'absolute';
+  pauseMessage.style.top = '50%';
+  pauseMessage.style.left = '50%';
+  pauseMessage.style.transform = 'translate(-50%, -50%)';
+  pauseMessage.style.padding = '20px 30px';
+  pauseMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+  pauseMessage.style.color = gamePaused ? '#ff0000' : '#00ff00';
+  pauseMessage.style.fontFamily = 'Arial, sans-serif';
+  pauseMessage.style.fontSize = '32px';
+  pauseMessage.style.borderRadius = '10px';
+  pauseMessage.style.textAlign = 'center';
+  pauseMessage.style.zIndex = '2000';
+  pauseMessage.textContent = gamePaused ? 'WAVES PAUSED' : 'WAVES RESUMED';
+  
+  document.body.appendChild(pauseMessage);
+  
+  // Remove the message after 2 seconds
+  setTimeout(() => {
+    document.body.removeChild(pauseMessage);
+  }, 2000);
+}
+
+// Listen for pause state updates from the server in multiplayer
+document.addEventListener('game-pause-update', ((event: CustomEvent) => {
+  gamePaused = event.detail.isPaused;
+  console.log(`Game pause state updated from server: ${gamePaused ? 'Paused' : 'Resumed'}`);
+}) as EventListener);
+
 // Add a function to initialize the game when the button is clicked
 function initializeGame() {
-  // Only initialize once
-  if (gameInitialized) return;
-  gameInitialized = true;
+  // If game is already initialized, toggle pause state 
+  if (gameInitialized) {
+    togglePauseGame();
+    return;
+  }
   
-  // Set game as started
+  // First initialization - start the game
+  gameInitialized = true;
   gameStarted = true;
   
   // In multiplayer, the host will notify the server
@@ -517,7 +631,6 @@ function initializeGame() {
     console.log("Host is starting the game for all players");
     gameSocket.startGame();
     // The server will trigger the game-started event for all clients
-    // No need to spawn bots or set wave info here
   } else if (!gameSocket) {
     // For single-player only, initialize wave and bots locally
     // Initialize game state
@@ -573,25 +686,33 @@ function onMouseClick(event: MouseEvent) {
   // Check for intersections with objects
   const intersects = raycaster.intersectObjects(scene.children, true);
   
-  // Check if we clicked on the start button
+  // Check if we clicked on any button
   for (let i = 0; i < intersects.length; i++) {
     const object = intersects[i].object;
-    // Check if the clicked object or its parent is the start button
+    // Check if the clicked object or its parent is a button
     let currentObj: THREE.Object3D | null = object;
-    let isButton = false;
+    let buttonType = '';
     
-    // Look for the start button in the object or any parent
+    // Look for buttons in the object or any parent
     while (currentObj) {
       if (currentObj.userData && currentObj.userData.isStartButton) {
-        isButton = true;
+        buttonType = 'start';
+        break;
+      }
+      if (currentObj.userData && currentObj.userData.isRestartButton) {
+        buttonType = 'restart';
         break;
       }
       currentObj = currentObj.parent;
     }
     
-    if (isButton) {
-      console.log("Start button clicked!");
+    if (buttonType === 'start') {
+      console.log("Start/Pause button clicked!");
       initializeGame();
+      break;
+    } else if (buttonType === 'restart') {
+      console.log("Restart button clicked!");
+      restartGame();
       break;
     }
   }
@@ -607,8 +728,41 @@ function animate() {
   // Update time counter for animations
   animationTime += 0.03;
   
-  // Animate the start button if game hasn't started yet
-  if (!gameStarted && startButton) {
+  // Animate the buttons
+  if (startButton) {
+    // Update button text based on game state
+    if (gameStarted && startButton.userData.textMesh && startButton.userData.textCanvas) {
+      // Change to "PAUSE WAVES" when game is active or "RESUME WAVES" when paused
+      const buttonText = gamePaused ? "RESUME\nWAVES" : "PAUSE\nWAVES";
+      
+      const context = startButton.userData.textCanvas.getContext('2d');
+      if (context) {
+        context.clearRect(0, 0, 512, 512);
+        context.fillStyle = 'black';
+        context.fillRect(0, 0, 512, 512);
+        
+        context.font = 'bold 80px Arial';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillStyle = 'white';
+        
+        // Split text into lines if it contains newline
+        const lines = buttonText.split('\n');
+        if (lines.length > 1) {
+          context.fillText(lines[0], 256, 180);
+          context.fillText(lines[1], 256, 320);
+        } else {
+          context.fillText(buttonText, 256, 256);
+        }
+        
+        // Update texture
+        const material = startButton.userData.textMesh.material as THREE.MeshBasicMaterial;
+        if (material && material.map) {
+          material.map.needsUpdate = true;
+        }
+      }
+    }
+    
     // Scale pulsing animation
     const scale = 1.0 + Math.sin(animationTime * 2) * 0.05;
     startButton.scale.set(scale, scale, scale);
@@ -619,7 +773,24 @@ function animate() {
     }
   }
   
-  // Update player
+  // Animate the restart button (only show when game has started)
+  if (restartButton) {
+    // Show restart button only when game has been started
+    restartButton.visible = gameStarted;
+    
+    if (restartButton.visible) {
+      // Scale pulsing animation
+      const scale = 1.0 + Math.sin(animationTime * 2 + 1) * 0.05; // Offset phase for different timing
+      restartButton.scale.set(scale, scale, scale);
+      
+      // Light intensity pulsing
+      if (restartButton.userData.light) {
+        restartButton.userData.light.intensity = 0.7 + Math.sin(animationTime * 3 + 1) * 0.3;
+      }
+    }
+  }
+  
+  // Always update player - pause only affects wave progression
   player.update();
   
   // Update multiplayer if active
@@ -656,8 +827,9 @@ function animate() {
     }
   }
 
-  // Only process bot logic if game has started
-  if (gameStarted) {
+  // Only process bot logic if game has started and not paused
+  // When paused, bots should freeze in their current positions
+  if (gameStarted && !gamePaused) {
     // Update bots and count remaining active ones
     let activeBotsCount = 0;
     
@@ -701,8 +873,8 @@ function animate() {
       updateWaveInfo(); // Show wave complete message
     }
     
-    // Handle wave complete timer
-    if (!isWaveInProgress && waveCompleteTimer > 0) {
+    // Handle wave complete timer only if not paused
+    if (!isWaveInProgress && waveCompleteTimer > 0 && !gamePaused) {
       waveCompleteTimer--;
       
       if (waveCompleteTimer === 0) {
@@ -764,7 +936,7 @@ function createBot() {
   // Keep them away from the end wall too
   const minZ = -110; // Start spawning from this position (further away)
   const maxZ = -60; // Don't spawn closer than this to the player
-  const spawnZ = minZ + Math.random() * (maxZ - minZ); // Random position in the allowed range
+  const spawnZ = minZ + Math.random() * (maxZ - minZ); // Correct calculation to spawn between minZ and maxZ
   
   const spawnPosition = new THREE.Vector3(spawnX, 0, spawnZ);
   

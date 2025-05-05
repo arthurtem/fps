@@ -504,11 +504,11 @@ export class World {
     return result;
   }
 
-  // Add a method to create a start game button in the bunker
+  // Add a method to create a start/pause game button in the bunker
   addStartGameButton(bunkerWidth: number, bunkerHeight: number, bunkerDepth: number): THREE.Mesh {
     // Create a button on the back wall of the bunker
-    const buttonWidth = 2.0;  // Increased size for better visibility
-    const buttonHeight = 2.0;
+    const buttonWidth = 2.5;  // Increased size even more
+    const buttonHeight = 2.5;
     const buttonDepth = 0.4;
     
     // Button base
@@ -523,7 +523,7 @@ export class World {
     // Position the button in the center of the back wall, at eye level
     // Note: in the bunker, z is positive (deeper into the bunker) and y is up
     // Position closer to player eye level (1.6 units high) and more prominent
-    button.position.set(0, 1.6, bunkerDepth/2 - 0.6);
+    button.position.set(-1.5, 1.6, bunkerDepth/2 - 0.6);
     button.castShadow = true;
     
     // Add button to scene
@@ -539,33 +539,144 @@ export class World {
       context.fillStyle = 'black';
       context.fillRect(0, 0, 512, 512);
       
-      context.font = 'bold 80px Arial';  // Larger text
+      // Add a glow effect
+      context.shadowColor = 'rgba(255, 255, 255, 0.8)';
+      context.shadowBlur = 15;
+      context.shadowOffsetX = 0;
+      context.shadowOffsetY = 0;
+      
+      context.font = 'bold 100px Arial';  // Even larger text
       context.textAlign = 'center';
       context.textBaseline = 'middle';
       context.fillStyle = 'white';
       context.fillText('START', 256, 180);
       context.fillText('GAME', 256, 320);
+      
+      // Draw a border around the text area
+      context.shadowBlur = 0;
+      context.lineWidth = 6;
+      context.strokeStyle = 'white';
+      context.strokeRect(10, 10, 492, 492);
     }
     
     const textTexture = new THREE.CanvasTexture(textCanvas);
     const textMaterial = new THREE.MeshBasicMaterial({ 
       map: textTexture,
-      transparent: true
+      transparent: true,
+      opacity: 1.0,
+      side: THREE.DoubleSide
     });
     
     // Create a plane for the text and position it just in front of the button
     const textGeometry = new THREE.PlaneGeometry(buttonWidth, buttonHeight);
     const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-    textMesh.position.set(0, 0, buttonDepth/2 + 0.01);
     
-    // Add text to button
+    // Position it slightly further out from the button for better visibility
+    textMesh.position.set(0, 0, buttonDepth/2 + 0.05);
+    
+    // Make text stand out more
+    textMesh.scale.set(1.1, 1.1, 1.1);
+    
     button.add(textMesh);
     
-    // Mark the button as interactive
+    // Store the text mesh for updating later
+    button.userData.textMesh = textMesh;
+    button.userData.textCanvas = textCanvas;
+    
+    // Mark the button as interactive with specific type
     button.userData.isStartButton = true;
+    button.userData.buttonType = 'start';
     
     // Add a pulsing light to make the button more noticeable
     const buttonLight = new THREE.PointLight(0xff0000, 1, 5);
+    buttonLight.position.set(0, 0, -0.5);
+    button.add(buttonLight);
+    
+    // Store the light for animation
+    button.userData.light = buttonLight;
+    
+    // Create a restart button
+    this.createRestartButton(bunkerWidth, bunkerHeight, bunkerDepth, buttonWidth, buttonHeight, buttonDepth);
+    
+    return button;
+  }
+  
+  // Add a method to create a restart game button
+  createRestartButton(bunkerWidth: number, bunkerHeight: number, bunkerDepth: number, buttonWidth: number, buttonHeight: number, buttonDepth: number): THREE.Mesh {
+    // Button base
+    const buttonGeometry = new THREE.BoxGeometry(buttonWidth, buttonHeight, buttonDepth);
+    const buttonMaterial = new THREE.MeshLambertMaterial({ 
+      color: 0x00aa00, // Green button
+      emissive: 0x00aa00, // Green glow
+      emissiveIntensity: 0.7
+    });
+    const button = new THREE.Mesh(buttonGeometry, buttonMaterial);
+    
+    // Position the button to the right of the start/pause button
+    button.position.set(1.5, 1.6, bunkerDepth/2 - 0.6);
+    button.castShadow = true;
+    
+    // Initially hidden until game starts
+    button.visible = false;
+    
+    // Add button to scene
+    this.scene.add(button);
+    
+    // Create a text label for the button
+    const textCanvas = document.createElement('canvas');
+    textCanvas.width = 512;
+    textCanvas.height = 512;
+    const context = textCanvas.getContext('2d');
+    
+    if (context) {
+      context.fillStyle = 'black';
+      context.fillRect(0, 0, 512, 512);
+      
+      // Add a glow effect
+      context.shadowColor = 'rgba(255, 255, 255, 0.8)';
+      context.shadowBlur = 15;
+      context.shadowOffsetX = 0;
+      context.shadowOffsetY = 0;
+      
+      context.font = 'bold 90px Arial';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillStyle = 'white';
+      context.fillText('RESTART', 256, 256);
+      
+      // Draw a border around the text area
+      context.shadowBlur = 0;
+      context.lineWidth = 6;
+      context.strokeStyle = 'white';
+      context.strokeRect(10, 10, 492, 492);
+    }
+    
+    const textTexture = new THREE.CanvasTexture(textCanvas);
+    const textMaterial = new THREE.MeshBasicMaterial({ 
+      map: textTexture,
+      transparent: true,
+      opacity: 1.0,
+      side: THREE.DoubleSide
+    });
+    
+    // Create a plane for the text and position it just in front of the button
+    const textGeometry = new THREE.PlaneGeometry(buttonWidth, buttonHeight);
+    const textMesh = new THREE.Mesh(textGeometry, textMaterial);
+    
+    // Position it slightly further out from the button for better visibility
+    textMesh.position.set(0, 0, buttonDepth/2 + 0.05);
+    
+    // Make text stand out more
+    textMesh.scale.set(1.1, 1.1, 1.1);
+    
+    button.add(textMesh);
+    
+    // Mark the button as interactive with specific type
+    button.userData.isRestartButton = true;
+    button.userData.buttonType = 'restart';
+    
+    // Add a pulsing light to make the button more noticeable
+    const buttonLight = new THREE.PointLight(0x00aa00, 1, 5);
     buttonLight.position.set(0, 0, -0.5);
     button.add(buttonLight);
     

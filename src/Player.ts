@@ -152,10 +152,16 @@ export class Player {
         this.toggleWeapon();
       }
       
-      // Shoot with Command key (Meta key)
-      if (e.key === 'Meta') {
-        this.shoot();
+      // Toggle aiming with Right Shift key
+      if (e.key === 'Shift' && e.location === KeyboardEvent.DOM_KEY_LOCATION_RIGHT) {
+        if (this.isAiming) {
+          this.stopAiming();
+        } else {
+          this.startAiming();
+        }
       }
+      
+      // Command/Meta key removed from controls
     });
     
     window.addEventListener('keyup', (e) => {
@@ -173,15 +179,28 @@ export class Player {
       e.preventDefault(); // Prevent default context menu
     });
 
+    // Right-click to toggle aiming
     document.addEventListener('mousedown', (e) => {
       if (e.button === 2) { // Right mouse button
-        this.startAiming();
+        if (this.isAiming) {
+          this.stopAiming();
+        } else {
+          this.startAiming();
+        }
       }
     });
-
+    
+    // Left-click for shooting
+    document.addEventListener('mousedown', (e) => {
+      if (e.button === 0) { // Left mouse button
+        this.keys['shoot'] = true; // Track shooting state with a flag
+      }
+    });
+    
+    // Stop shooting when mouse button is released
     document.addEventListener('mouseup', (e) => {
-      if (e.button === 2) { // Right mouse button
-        this.stopAiming();
+      if (e.button === 0) { // Left mouse button
+        this.keys['shoot'] = false;
       }
     });
 
@@ -712,6 +731,14 @@ export class Player {
 
   // Toggle between weapons
   toggleWeapon() {
+    // If currently aiming, cancel aiming when switching weapons
+    if (this.isAiming) {
+      this.stopAiming();
+      this.aimTransitionProgress = 0; // Immediately reset zoom level
+      this.camera.fov = this.defaultFOV;
+      this.camera.updateProjectionMatrix();
+    }
+    
     // Toggle between assault rifle and sniper rifle
     if (this.currentWeapon === 'assaultRifle') {
       this.currentWeapon = 'sniperRifle';
@@ -727,11 +754,6 @@ export class Player {
       
       // Extreme zoom when aiming with sniper
       this.aimingFOV = 15; // Ultra-tight FOV for sniper scope (changed from 25 to 15)
-      
-      // Force update aiming state if currently aiming
-      if (this.isAiming) {
-        this.updateAimTransition();
-      }
       
       console.log('Switched to Sniper Rifle');
     } else {
@@ -749,12 +771,13 @@ export class Player {
       // Normal zoom when aiming with assault rifle
       this.aimingFOV = 65; // Default FOV for assault rifle
       
-      // Force update aiming state if currently aiming
-      if (this.isAiming) {
-        this.updateAimTransition();
-      }
-      
       console.log('Switched to Assault Rifle');
+    }
+    
+    // Hide scope overlay if it exists
+    const scopeOverlay = document.getElementById('scope-overlay');
+    if (scopeOverlay) {
+      scopeOverlay.style.display = 'none';
     }
     
     // Tell the PlayerModel to update the weapon model
@@ -1032,8 +1055,8 @@ export class Player {
       this.jump();
     }
     
-    // Handle shooting with Command key
-    if (this.keys['meta'] && this.canShoot) {
+    // Handle continuous shooting with left mouse button
+    if (this.keys['shoot'] && this.canShoot) {
       this.shoot();
     }
     

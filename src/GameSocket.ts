@@ -44,6 +44,8 @@ export class GameSocket {
   private onWaveUpdate: (wave: number, remaining: number) => void;
   private onGameStarted: () => void = () => {};
   private gameStarted: boolean = false;
+  private lastUpdateTime: number = 0; // Track last position update time
+  private readonly UPDATE_INTERVAL: number = 1000 / 60; // Target 60 updates per second
 
   constructor(player: Player, scene: THREE.Scene, onWaveUpdate: (wave: number, remaining: number) => void) {
     this.player = player;
@@ -330,6 +332,40 @@ export class GameSocket {
       // Remove the message after 2 seconds
       setTimeout(() => {
         document.body.removeChild(startedMessage);
+      }, 2000);
+    });
+
+    // Game pause state update
+    this.socket.on('game-pause-state', (data: { isPaused: boolean }) => {
+      // Update the local pause state in main.ts
+      const gamePausedEvent = new CustomEvent('game-pause-update', {
+        detail: { isPaused: data.isPaused }
+      });
+      document.dispatchEvent(gamePausedEvent);
+      
+      console.log(`Game pause state updated: ${data.isPaused ? 'Paused' : 'Resumed'}`);
+      
+      // Show a message indicating the pause state change
+      const pauseMessage = document.createElement('div');
+      pauseMessage.style.position = 'absolute';
+      pauseMessage.style.top = '50%';
+      pauseMessage.style.left = '50%';
+      pauseMessage.style.transform = 'translate(-50%, -50%)';
+      pauseMessage.style.padding = '20px 30px';
+      pauseMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+      pauseMessage.style.color = data.isPaused ? '#ff0000' : '#00ff00';
+      pauseMessage.style.fontFamily = 'Arial, sans-serif';
+      pauseMessage.style.fontSize = '32px';
+      pauseMessage.style.borderRadius = '10px';
+      pauseMessage.style.textAlign = 'center';
+      pauseMessage.style.zIndex = '2000';
+      pauseMessage.textContent = data.isPaused ? 'WAVES PAUSED' : 'WAVES RESUMED';
+      
+      document.body.appendChild(pauseMessage);
+      
+      // Remove the message after 2 seconds
+      setTimeout(() => {
+        document.body.removeChild(pauseMessage);
       }, 2000);
     });
   }
@@ -794,18 +830,23 @@ export class GameSocket {
       player.model.update(true, 0.08);
     });
     
-    // Send player position update every frame
-    if (this.player && this.player.playerBody) {
+    // Calculate time since last update
+    const currentTime = performance.now();
+    const timeSinceLastUpdate = currentTime - this.lastUpdateTime;
+    
+    // Send player position update at controlled rate for better performance
+    if (timeSinceLastUpdate >= this.UPDATE_INTERVAL && this.player && this.player.playerBody) {
+      this.lastUpdateTime = currentTime;
+      
       this.updatePlayerPosition(
         this.player.playerBody.position,
         new THREE.Euler(this.player.pitch, this.player.yaw, 0)
       );
-    }
-    
-    // Only host sends bot updates to server
-    if (this.isHost) {
-      // Instead of locally updating bots, tell server to handle it
-      this.sendHostBotUpdates();
+      
+      // Only host sends bot updates to server (at the same rate as position updates)
+      if (this.isHost) {
+        this.sendHostBotUpdates();
+      }
     }
     
     // Local visual updates for all bots (but no position changes!)
@@ -940,7 +981,7 @@ export class GameSocket {
       document.body.appendChild(debugContainer);
     }
     
-    // Update the debug info
+    // Update the debug info more frequently to match server tick rate
     setInterval(() => {
       if (!debugContainer) return;
       
@@ -975,6 +1016,10 @@ export class GameSocket {
         '<span style="color: #00ff00;">CONNECTED</span>' : 
         '<span style="color: #ff0000;">DISCONNECTED</span>';
       
+      // Calculate FPS and update rates
+      const clientUpdateRate = Math.round(1000 / this.UPDATE_INTERVAL);
+      const serverTickRate = 1000 / 20; // Server tick rate (20ms interval = 50Hz)
+      
       debugContainer.innerHTML = `
         <div style="margin-bottom: 5px; color: #00ff00;"><strong>MULTIPLAYER DEBUG:</strong></div>
         <div>Game ID: ${this.gameId || 'N/A'}</div>
@@ -982,12 +1027,13 @@ export class GameSocket {
         <div>Is Host: ${this.isHost ? 'YES' : 'NO'}</div>
         <div>Remote Players: ${this.remotePlayers.size}</div>
         <div>Active Bots: ${botCount}</div>
+        <div>Client Update: ${clientUpdateRate}Hz | Server Tick: ${serverTickRate}Hz</div>
         <div style="margin-top: 5px; border-top: 1px solid #666; padding-top: 5px;">
           <strong>PLAYER LIST:</strong>
           ${playerList || '<div>No remote players</div>'}
         </div>
       `;
-    }, 500); // Update every 500ms
+    }, 200); // Update every 200ms for smoother UI
   }
 
   // Host starts the game (triggered by the start button)
@@ -996,6 +1042,14 @@ export class GameSocket {
     
     console.log(`Host is starting the game: ${this.gameId}`);
     this.socket.emit('start-game');
+  }
+
+  // Toggle game pause state (only host can do this)
+  public togglePauseGame() {
+    if (!this.gameId || !this.isHost) return;
+    
+    console.log(`Host is toggling pause state for game: ${this.gameId}`);
+    this.socket.emit('toggle-pause');
   }
 
   // Method to set the game started callback
